@@ -1,124 +1,118 @@
+from flask import Flask, render_template, request
 import pyaudio
 import wave
 import whisper
 import google.generativeai as genai
-import difflib
-from difflib import SequenceMatcher
-from rapidfuzz import fuzz
+import pandas as pd
 import time
 import re
-import pandas as pd
-import numpy as np
+from rapidfuzz import fuzz
 
-#カウンタの設定
-c = 1
-#AIの設定
+app = Flask(__name__)
+
+# AIの設定
 API_KEY = "AIzaSyDRaStCE57-Z67lzx6mNFpYNlDDyuwP9J4"
 genai.configure(api_key=API_KEY)
 model_ai = genai.GenerativeModel("gemini-2.0-flash")
 model_listen = whisper.load_model("medium")
-# 録音の設定
+
+# 録音の設定（初期値）
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 44100
 CHUNK = 1024
-RECORD_SECONDS = 10  # 各文の録音時間
 OUTPUT_FILENAME = "output.wav"
 
-foreign_lang = input("何語をチェックしますか？ [韓国語 or 英語] :")
-choice = input("自分の文章を使いますか？ [Yes or No] :")
-
-def get_foreign_example(foreign_lang):
-    number = int(input("何文練習するか :"))
-    model_ai = genai.GenerativeModel("gemini-2.0-flash")
-    response = model_ai.generate_content(f"{foreign_lang}の文を初学者用に{number}個生成してください.日本語の説明は不要です。{foreign_lang}の文章のみを出力してください。文番号は不要です。")
-    return response.text
-
-if choice=="Yes":
-    raw_text = input("\n文章を入力してください: ")
-else:
-    raw_text = get_foreign_example(foreign_lang)
-
-
-while c == 1: 
-
-    # 文単位で分割（「.」「?」「!」で区切る）
-    foreign_sentences = [sentence.strip() for sentence in re.split(r'\s*[.?!]\s*', raw_text) if sentence.strip()]
-          
-    #結果の表示
-    results = []
-
-    # 各文ごとに音読＆比較
-    for index, sentence in enumerate(foreign_sentences):
-        print(f"\n🔊 {index+1}番目の文を音読してください: {sentence}")
-
-        # 次の文に進む前に少し待機
-        time.sleep(0.5)
-
-        # 録音開始の表示（強調）
-        print("🎤 録音開始...")
+#AIによる文生成
+def generate_text(language):
+    response = model_ai.generate_content(f"{language}の文を初心者向けに5個生成してください。日本語の説明は不要です。{language}の文章のみを出力してください。")
+    sentences = [sentence.strip() for sentence in re.split(r'\s*[.?!]\s*', response.text) if sentence.strip()]
     
-        # 録音開始
-        audio = pyaudio.PyAudio()
-        stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
+    return sentences
 
-        frames = []
-        for _ in range(0, int(RATE / CHUNK * RECORD_SECONDS)):  # 指定時間録音
-            data = stream.read(CHUNK)
-            frames.append(data)
+#外国語選択と録音時間の入力から録音して類似度を返す(1個の文について評価)
+def listen_evaluate(sentence,foreign_lang,record_time):
+    result = []
+    audio = pyaudio.PyAudio()
+    stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
+    frames = []
 
-        print("✅ 録音終了")
-        stream.stop_stream()
-        stream.close()
-        audio.terminate()
+    for _ in range(0, int(RATE / CHUNK * record_time)):  
+        data = stream.read(CHUNK)
+        frames.append(data)
 
-        # 音声ファイルを保存
-        waveFile = wave.open(OUTPUT_FILENAME, 'wb')
-        waveFile.setnchannels(CHANNELS)
-        waveFile.setsampwidth(audio.get_sample_size(FORMAT))
-        waveFile.setframerate(RATE)
-        waveFile.writeframes(b''.join(frames))
-        waveFile.close()
+    stream.stop_stream()
+    stream.close()
+    audio.terminate()
 
-        if foreign_lang == "韓国語":
-            lang = "ko"
-        else:
-            lang = "en"
+    # 音声ファイル保存
+    waveFile = wave.open(OUTPUT_FILENAME, 'wb')
+    waveFile.setnchannels(CHANNELS)
+    waveFile.setsampwidth(audio.get_sample_size(FORMAT))
+    waveFile.setframerate(RATE)
+    waveFile.writeframes(b''.join(frames))
+    waveFile.close()
 
-        # Whisperで文字起こし
-        result = model_listen.transcribe(OUTPUT_FILENAME, language=lang)
-        user_sentence = result["text"].strip()
-
-        # Whisperの出力を確認
-        print(f"\n【Whisperの出力】 {user_sentence}")
-
-        # AIの文と比較
-        similarity = fuzz.ratio(sentence, user_sentence)   # 類似度計算
-
-        results.append({"AIの文": sentence, "あなたの発音": user_sentence, "類似度スコア": similarity})
-    
-        print(f"\n【AIの文】 {sentence}")
-        print(f"【あなたの発音】 {user_sentence}")
-        print(f"✅ 類似度スコア: {similarity:.2f}")
-
-        # 次の文に進む前に少し待機
-        time.sleep(1)
-
-    #データフレームにして表示
-    df = pd.DataFrame(results)
-    df_text = df.to_string()
-    df.index = range(1,len(df)+1)
-    print("\n 発音チェック\n")
-    print(df)
-    res = model_ai.generate_content(f"以上の発音チェック結果を分析して、どこの発音が弱点かを指摘してください\n\n{df_text}")
-    print("\n📊 発音の弱点分析\n")
-    print(res.text)
-
-    d = input("弱点を踏まえて再度練習しますか？ [Yes or No]:")
-    if d == "Yes":
-        n1 = int(input("何文練習するか :"))
-        sign = model_ai.generate_content(f"弱点を克服できる{foreign_lang}の初学者用の文章を{n1}個生成してください。日本語の説明は不要です。{foreign_lang}の文章のみを出力してください。先頭の文番号は不要です。")
-        raw_text = sign.text
+    if foreign_lang == "韓国語":
+        lang = "ko"
     else:
-        c = 0
+        lang = "en"
 
+    # Whisperで文字起こし
+    voice = model_listen.transcribe(OUTPUT_FILENAME, language=lang)
+    user_sentence = voice["text"].strip()
+
+        
+    # AIの文と比較
+    similarity = fuzz.ratio(sentence, user_sentence)   # 類似度計算
+    result.append({"AIの文": sentence, "あなたの発音": user_sentence, "類似度スコア": similarity})
+    df = pd.DataFrame(result, columns=["AIの文", "あなたの発音", "類似度スコア"])
+    df.index = range(1, len(df)+1)  # インデックスを 1 から開始
+    return df
+        
+       
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+@app.route("/trans", methods=["POST"])
+def trans():
+    language = request.form["language"]
+    choice = request.form["choice"]
+    record_time = int(request.form["record_time"])
+    
+    
+    try:
+        index = int(request.form["index"])
+    
+    except:
+        index = 0
+    
+
+    if choice == "Yes":
+        raw_text = request.form["raw_text"]
+        sentences = [sentence.strip() for sentence in re.split(r'\s*[.?!]\s*', raw_text) if sentence.strip()]
+    
+    else:
+        sentences = generate_text(language)
+
+    num = len(sentences)
+    
+    for sentence in sentences:
+        df = listen_evaluate(sentence,language,record_time)
+        df_html = df.to_html(classes="horizontal-table", index=False)
+
+    return render_template("trans.html",sentence=sentences[index],df_html=df_html,index=index)
+
+
+
+
+@app.route("/retry", methods=["POST"])
+def retry():
+    language = request.form["language"]
+    raw_text = generate_text(language)
+    return render_template("check.html", language=language, sentences=raw_text.split("\n"), index=0)
+
+if __name__ == "__main__":
+    app.run(debug=True)
