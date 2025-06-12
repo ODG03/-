@@ -1,76 +1,15 @@
 from flask import Flask, render_template, request
-import pyaudio
-import wave
-import whisper
-import google.generativeai as genai
+import generate
+import listen
 import pandas as pd
-import time
+import secrets
 import re
-from rapidfuzz import fuzz
 
 app = Flask(__name__)
+app.secret_key = secrets.token_hex(16)  # セッションなしだが安全性確保
 
-# AIの設定
-API_KEY = "AIzaSyDRaStCE57-Z67lzx6mNFpYNlDDyuwP9J4"
-genai.configure(api_key=API_KEY)
-model_ai = genai.GenerativeModel("gemini-2.0-flash")
-model_listen = whisper.load_model("medium")
-
-# 録音の設定（初期値）
-FORMAT = pyaudio.paInt16
-CHANNELS = 1
-RATE = 44100
-CHUNK = 1024
-OUTPUT_FILENAME = "output.wav"
-
-#AIによる文生成
-def generate_text(language):
-    response = model_ai.generate_content(f"{language}の文を初心者向けに5個生成してください。日本語の説明は不要です。{language}の文章のみを出力してください。")
-    sentences = [sentence.strip() for sentence in re.split(r'\s*[.?!]\s*', response.text) if sentence.strip()]
-    
-    return sentences
-
-#外国語選択と録音時間の入力から録音して類似度を返す(1個の文について評価)
-def listen_evaluate(sentence,foreign_lang,record_time):
-    result = []
-    audio = pyaudio.PyAudio()
-    stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
-    frames = []
-
-    for _ in range(0, int(RATE / CHUNK * record_time)):  
-        data = stream.read(CHUNK)
-        frames.append(data)
-
-    stream.stop_stream()
-    stream.close()
-    audio.terminate()
-
-    # 音声ファイル保存
-    waveFile = wave.open(OUTPUT_FILENAME, 'wb')
-    waveFile.setnchannels(CHANNELS)
-    waveFile.setsampwidth(audio.get_sample_size(FORMAT))
-    waveFile.setframerate(RATE)
-    waveFile.writeframes(b''.join(frames))
-    waveFile.close()
-
-    if foreign_lang == "韓国語":
-        lang = "ko"
-    else:
-        lang = "en"
-
-    # Whisperで文字起こし
-    voice = model_listen.transcribe(OUTPUT_FILENAME, language=lang)
-    user_sentence = voice["text"].strip()
-
-        
-    # AIの文と比較
-    similarity = fuzz.ratio(sentence, user_sentence)   # 類似度計算
-    result.append({"AIの文": sentence, "あなたの発音": user_sentence, "類似度スコア": similarity})
-    df = pd.DataFrame(result, columns=["AIの文", "あなたの発音", "類似度スコア"])
-    df.index = range(1, len(df)+1)  # インデックスを 1 から開始
-    return df
-        
-       
+results_list = []  # 全ての評価結果を保持するリスト
+sentences_list = []  # 生成された文リストを保持
 
 @app.route("/")
 def index():
@@ -78,41 +17,65 @@ def index():
 
 @app.route("/trans", methods=["POST"])
 def trans():
+    global sentences_list, results_list
+    
     language = request.form["language"]
     choice = request.form["choice"]
     record_time = int(request.form["record_time"])
-    
-    
-    try:
-        index = int(request.form["index"])
-    
-    except:
-        index = 0
-    
+    index = int(request.form.get("index", 0))
+
+    raw_text = request.form.get("raw_text", "").strip()  # 🔹 入力されたテキストを取得
+
+    if index == 0:
+        results_list = []  # 🔹 初回リクエスト時に結果をリセット
 
     if choice == "Yes":
-        raw_text = request.form["raw_text"]
-        sentences = [sentence.strip() for sentence in re.split(r'\s*[.?!]\s*', raw_text) if sentence.strip()]
-    
+        sentences_list = [sentence.strip() for sentence in re.split(r'\s*[.?!]\s*', raw_text) if sentence.strip()]
     else:
-        sentences = generate_text(language)
+        sentences_list = generate.generate_text(language)
 
-    num = len(sentences)
+    num = len(sentences_list)
+
+    if index < num:
+        result = listen.listen_evaluate(sentences_list[index], language, record_time)
+        results_list.append(result.to_dict(orient="records")[0])
+
+        df_html = result.to_html(classes="horizontal-table", index=False)
+
+        return render_template("trans.html", sentence=sentences_list[index], df_html=df_html, index=index, num=num, language=language, record_time=record_time, raw_text=raw_text)
     
-    for sentence in sentences:
-        df = listen_evaluate(sentence,language,record_time)
-        df_html = df.to_html(classes="horizontal-table", index=False)
-
-    return render_template("trans.html",sentence=sentences[index],df_html=df_html,index=index)
+    return result_page(language)
 
 
+def result_page(language):
+    """🔹 `result()` の処理を関数化して `trans()` からも呼び出せるようにする"""
+    df_final = pd.DataFrame(results_list)
+    df_html = df_final.to_html(classes="horizontal-table", index=False)
 
+    # Gemini AI に発音評価データを渡して分析してもらう
+    analysis_prompt = f"""
+    以下の発音評価データから、ユーザーの発音の弱点を指摘し、改善のアドバイスをしてください。
+
+    {df_final.to_string()}
+    
+    日本語で簡潔に講評をお願いします。
+    """
+    
+    analysis = generate.model_ai.generate_content(analysis_prompt).text  # 🔹 AI に講評生成を依頼
+
+    return render_template("result.html", language=language, df_html=df_html, analysis=analysis)
+
+@app.route("/result", methods=["POST"])
+def result():
+    language = request.form.get("language", "英語")  # 言語を適切に管理
+    return result_page(language)
 
 @app.route("/retry", methods=["POST"])
 def retry():
-    language = request.form["language"]
-    raw_text = generate_text(language)
-    return render_template("check.html", language=language, sentences=raw_text.split("\n"), index=0)
+    global results_list, sentences_list
+    results_list = []  # 結果リストをリセット
+    sentences_list = []  # 文リストをリセット
+    return render_template("index.html")
 
 if __name__ == "__main__":
     app.run(debug=True)
