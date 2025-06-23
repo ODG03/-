@@ -12,7 +12,6 @@
 </head>
 <body>
     <h2>外国語発音チェック</h2>
-
     <form action="/trans" method="post">
         <!-- 言語選択 -->
         <label for="language">チェックする言語:</label>
@@ -23,7 +22,7 @@
         <br>
 
 
-        <!-- 自分の文章を使うか選択 -->
+        <!-- 自分の文章を使うか選択 --> <!--新：自分のテキストを使う場合、該当箇所コピペ入力ではなく、該当ファイルをドラッグ、練習したい言語のテキストのみ取り出す方法にしたい-->>
         <label for="choice">自分の文章を使いますか?</label>
         <select id="choice" name="choice" onchange="toggleOptions()">
             <option value="Yes">Yes</option>
@@ -43,7 +42,7 @@
         <input type="number" name="record_time" min="5" max="30" value="10">
 
         <br>
-        <button type="submit">チェック開始</button>
+        <button type="submit">診断開始</button>
     </form>
 </body>
 </html>

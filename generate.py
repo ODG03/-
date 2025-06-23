@@ -1,16 +1,11 @@
-from flask import Flask, render_template, request
-import pyaudio
-import wave
-import whisper
 import google.generativeai as genai
-import pandas as pd
 import time
 import re
 import os
-from rapidfuzz import fuzz
+
 
 # AIの設定
-API_KEY = "AIzaSyDRaStCE57-Z67lzx6mNFpYNlDDyuwP9J4"
+API_KEY = "AIzaSyBmfRaLY_reiBiIKD55fNgUoWXaFHhXxDc"
 genai.configure(api_key=API_KEY)
 model_ai = genai.GenerativeModel("gemini-2.0-flash")
 #AIによる文生成
