@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>外国語発音チェック</title>
+    <script>
+        let timer;
+
+        function toggleRecording() {
+            var button = document.getElementById("recordButton");
+            var status = document.getElementById("recordingStatus");
+            var countdown = document.getElementById("countdown");
+            var evaluation = document.getElementById("evaluationStatus");
+
+            if (button.innerText === "録音開始") {
+                button.innerText = "録音停止";
+                status.style.display = "block"; // 🔹 「録音中...」の表示
+                countdown.style.display = "block"; // 🔹 カウントダウン表示
+                evaluation.style.display = "none"; // 🔹 評価ステータスは非表示
+
+                var timeLeft = parseInt(document.getElementById("record_time").value);
+                countdown.innerText = "残り時間: " + timeLeft + "秒";
+
+                timer = setInterval(function () {
+                    timeLeft--;
+                    countdown.innerText = "残り時間: " + timeLeft + "秒";
+                    if (timeLeft <= 0) {
+                        clearInterval(timer);
+                        stopRecording();
+                    }
+                }, 1000);
+            } 
+        }
+
+        function stopRecording() {
+            var button = document.getElementById("recordButton");
+            var status = document.getElementById("recordingStatus");
+            var countdown = document.getElementById("countdown");
+            var evaluation = document.getElementById("evaluationStatus");
+
+            button.innerText = "録音開始";
+            status.style.display = "none"; // 🔹 録音終了時に非表示
+            countdown.style.display = "none"; // 🔹 カウントダウン非表示
+            evaluation.style.display = "block"; // 🔹 「評価中...」の表示をON
+
+            // 🔹 2秒後にフォームを送信（評価開始）
+            setTimeout(function () {
+                document.getElementById("stopForm").submit();
+            }, 2000);
+        }
+    </script>
+</head>
+<body>
+    <h2>外国語発音チェック</h2>
+
+    <p>以下の文章を音読してください:</p>
+    <p><strong>{{ sentence }}</strong></p>
+
+    <!-- 🔹 録音＆評価状態の表示 -->
+    <p id="recordingStatus" style="display: none; color: red; font-weight: bold;">録音中...</p>
+    <p id="countdown" style="display: none; font-weight: bold;"></p> <!-- 🔹 カウントダウン表示 -->
+    <p id="evaluationStatus" style="display: none; color: blue; font-weight: bold;">評価中...</p> <!-- 🔹 評価中表示 -->
+
+    <!-- 録音ボタン -->
+    <button id="recordButton" onclick="toggleRecording()">録音開始</button>
+
+    <!-- 🔹 停止＆評価フォーム -->
+    <form id="stopForm" action="/trans" method="post">
+        <input type="hidden" name="language" value="{{ language }}">
+        <input type="hidden" name="record_time" id="record_time" value="{{ record_time }}">
+        <input type="hidden" name="index" value="{{ index }}">
+    </form>
+
+    <h2>発音チェック結果</h2>
+    <p>以下にあなたの発音結果を表示します:</p>
+    <div class="horizontal-container">
+        {{ df_html|safe }}
+    </div>
+
+    {% if index+1 < num %}
+    <form action="/trans" method="post">
+        <input type="hidden" name="language" value="{{ language }}">
+        <input type="hidden" name="record_time" value="{{ record_time }}">
+        <input type="hidden" name="index" value="{{ index + 1 }}">
+        <button type="submit">次の文へ</button>
+    </form>
+    {% else %}
+    <form action="/result" method="post">
+        <button type="submit">すべての評価が完了しました</button>
+    </form>
+    {% endif %}
+</body>
+</html>
